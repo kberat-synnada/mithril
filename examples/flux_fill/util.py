@@ -182,7 +182,7 @@ configs = {
 }
 
 
-def load_flow_model(name: str, backend: ml.Backend, hf_download: bool = True):
+def load_flow_model(name: str, backend: ml.Backend, height, width, hf_download: bool = True):
     # Loading Flux
     print("Init model")
     ckpt_path = configs[name].ckpt_path
@@ -194,11 +194,11 @@ def load_flow_model(name: str, backend: ml.Backend, hf_download: bool = True):
     ):
         ckpt_path = hf_hub_download(r_id, r_flow)
 
-    flux_lm = flux(configs[name].params)
+    flux_lm = flux(configs[name].params, height, width)
     flux_pm = ml.compile(
         flux_lm,
         backend,
-        jit=False,
+        jit=True,
         use_short_namings=False,
     )
 
@@ -230,7 +230,7 @@ def load_decoder(
         decoder_lm,
         backend=backend,
         inference=True,
-        jit=False,
+        jit=True,
         data_keys=["input"],
         use_short_namings=False,
     )
@@ -264,7 +264,7 @@ def load_encoder(
         encoder_lm,
         backend=backend,
         inference=True,
-        jit=False,
+        jit=True,
         data_keys=["input"],
         use_short_namings=False,
     )

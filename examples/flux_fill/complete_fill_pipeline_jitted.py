@@ -137,7 +137,7 @@ def get_pipeline_fn(
     )
     # Load flow model
     print("Loading Flow model")
-    flow_pm, _, flow_params = load_flow_model(name, backend=backend)  # noqa F841
+    flow_pm, _, flow_params = load_flow_model(name, backend=backend, height=height, width=width)  # noqa F841
 
     # Load flow model
     print("Loading Decoder model")
@@ -153,7 +153,8 @@ def get_pipeline_fn(
         backend=backend,
     )
     def _pipeline_core(model_inputs):
-        prepare_outputs, _ = prepare_pm.evaluate(all_params, model_inputs, state=prepare_pm.initial_state_dict)
+        prepare_outputs = prepare_pm.evaluate(all_params, model_inputs, state=prepare_pm.initial_state_dict)
+        # prepare_outputs = prepare_pm.evaluate(all_params, model_inputs, state=prepare_pm.initial_state_dict)
         prepare_outputs = {key[1:]: value for key, value in prepare_outputs.items()}
         _height = 2 * (int(height) // (vae_scale_factor * 2))
         _width = 2 * (int(width) // (vae_scale_factor * 2))

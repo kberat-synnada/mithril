@@ -31,6 +31,7 @@ from mithril.models import (
     Transpose,
     Randn,
     Ones,
+    Buffer,
 )
 from mithril.framework.common import TBD
 
@@ -239,21 +240,36 @@ def decoder(
     return decoder
 
 
+# def diagonal_gaussian(sample: bool = True, chunk_dim: int = 1):
+#     input = IOKey("input")
+#     split_output = Split(axis=chunk_dim, split_size=2)(input = input)
+#     mean = split_output[0]
+#     log_var = split_output[1]
+#     if sample:
+#         rand_model = Randn()
+#         std = (0.5 * log_var).exp()
+#         rand_out, _ = rand_model(shape = mean.shape)
+#         std_out = std * (rand_out / 100.0)
+#         output = mean + std_out
+#         return Model.create(output=output)
+#     else:
+#         return Model.create(output=mean)
+import random
 def diagonal_gaussian(sample: bool = True, chunk_dim: int = 1):
     input = IOKey("input")
-    split_output = Split(axis=chunk_dim, split_size=2)(input = input)
-    mean = split_output[0]
-    log_var = split_output[1]
+    model = Model()
+    model |= (split := Split(axis=chunk_dim, split_size=2)).connect(input = input)
+    mean = split.output[0]
     if sample:
-        rand_model = Randn()
+        log_var = split.output[1]
+        model |= (randn_model := Randn(key = random.randint(0, 2**63 - 1))).connect(shape=mean.shape)
         std = (0.5 * log_var).exp()
-        rand_out, _ = rand_model(shape = mean.shape)
-        std_out = std * rand_out #(rand_out / 100.0)
+        std_out = std * randn_model.output
         output = mean + std_out
-        return Model.create(output=output)
     else:
-        return Model.create(output=mean)
-
+        output = mean
+    model |= Buffer().connect(input=output, output="mean")
+    return model
 
 def auto_encoder(
     ae_params: AutoEncoderParams,

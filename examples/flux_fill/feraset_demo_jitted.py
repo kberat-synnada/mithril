@@ -185,6 +185,7 @@ data = {
 def segformer_seg(reference_image):
     inputs = processor(images=reference_image, return_tensors='np')
     data["input"] = backend.array(inputs["pixel_values"])
+    data["img_size"] = reference_image.size[::-1]
     # Run segmentation model.
     upsampled_logits = pm.evaluate(params, data)["upsampled_logits"]
     # upsampled_logits = backend.to_device(upsampled_logits, "cpu")
@@ -207,24 +208,31 @@ def segformer_seg(reference_image):
         (final_dilated_mask * 255).astype(np.uint8), (5, 5), 0
     )
     return Image.fromarray(blurred_mask).convert("RGB")
+
+input_img_url = "https://i.ibb.co/xKS4F80b/leonardo-dicaprio-1.jpg"
+response = requests.get(input_img_url)
+image = Image.open(BytesIO(response.content)).convert("RGB")
+
 num_steps = 10
+resized_image = resize_img(image, max_side=1024)
+width, height = calculate_optimal_dimensions(resized_image)
 pipeline = get_pipeline_fn(
     backend=backend,
     guidance=config.guidance_scale,
-    width=1024,
-    height=1024,
+    width=width,
+    height=height,
     num_steps=num_steps,
     max_seq_len=512,
 )
 
 def infer_img2img(prompt, image) -> Image:
-    resized_image = resize_img(image, max_side=1024)
-    mask = segformer_seg(resized_image)
-    final_mask = mask.resize(resized_image.size)
+    # resized_image = resize_img(image, max_side=1024)
+    mask = segformer_seg(image)
+    final_mask = mask.resize(image.size)
     # width, height = calculate_optimal_dimensions(resized_image)
     muscle_image = pipeline(
         prompt=prompt,
-        img_cond=resized_image,
+        img_cond=image,
         img_mask=final_mask,
     )
     return muscle_image
@@ -232,9 +240,6 @@ def infer_img2img(prompt, image) -> Image:
 
 seed = random.randint(0, 2**63 - 1)
 
-input_img_url = "https://i.ibb.co/xKS4F80b/leonardo-dicaprio-1.jpg"
-response = requests.get(input_img_url)
-image = Image.open(BytesIO(response.content)).convert("RGB")
 # path = "examples/flux_fill/emre.jpeg"
 # image = Image.open(path).convert("RGB")
 # image = Image.open(sys.argv[1]).convert("RGB")
@@ -242,7 +247,7 @@ image = Image.open(BytesIO(response.content)).convert("RGB")
 start_time = time.perf_counter()
 result_image = infer_img2img(
     prompt="muscular, wider shoulder,bigger arms,sporty looking",
-    image=image,
+    image=resized_image,
 )
 end_time = time.perf_counter()
 print(f"Inference time: {end_time - start_time:.2f} seconds")
@@ -251,7 +256,7 @@ result_image.save("generated_img_muscle.png")
 start_time = time.perf_counter()
 result_image = infer_img2img(
     prompt='prisoner clothing, with gang tattoos',
-    image=image,
+    image=resized_image,
 )
 end_time = time.perf_counter()
 print(f"Second Inference time: {end_time - start_time:.2f} seconds")

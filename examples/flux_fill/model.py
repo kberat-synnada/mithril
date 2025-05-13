@@ -14,7 +14,7 @@
 
 from dataclasses import dataclass
 
-from examples.flux.layers import (
+from examples.flux_fill.layers import (
     double_stream_block,
     embed_nd,
     last_layer,
@@ -44,13 +44,13 @@ class FluxParams:
     max_seq_len: int
 
 
-def flux(params: FluxParams):
+def flux(params: FluxParams, height: int, width: int) -> Model:
     flux = Model()
-
-    img = IOKey("img", shape=[1, 4096, params.in_channels]) # 7854
+    shp = (height // 16) * (width // 16)
+    img = IOKey("img", shape=[1, shp, params.in_channels]) # 7854
     txt = IOKey("txt", shape=[1, params.max_seq_len, params.context_in_dim])
 
-    img_ids = IOKey("img_ids", shape=[1, 4096, 3])
+    img_ids = IOKey("img_ids", shape=[1, shp, 3])
     txt_ids = IOKey("txt_ids", shape=[1, params.max_seq_len, 3])
 
     timesteps = IOKey("timesteps", shape=[1])

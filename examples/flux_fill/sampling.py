@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import random
 import math
 from collections.abc import Callable
 from copy import deepcopy
@@ -172,7 +173,7 @@ def get_noise(
 ) -> ml.models.Connection:
     height = 2 * math.ceil(height / 16)
     width = 2 * math.ceil(width / 16)
-    noise_model = Randn(shape=(num_samples, 16, height, width))
+    noise_model = Randn(shape=(num_samples, 16, height, width), key= random.randint(0, 2**63 - 1))
     # noise_model = Ones(shape=(num_samples, 16, height, width))
     return noise_model.output
 

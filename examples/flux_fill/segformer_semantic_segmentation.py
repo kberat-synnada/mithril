@@ -35,5 +35,5 @@ def segformer_semantic_segmentation(config, *, name: str | None = None):
         input=pixel_values
     )
     logits = segformer_decode_head(config, name="decode_head")(input=hidden_states)
-    upsampled_logits = segformer_bilinear_interpolate()(input=logits, size=(1024, 1024))
+    upsampled_logits = segformer_bilinear_interpolate()(input=logits, size=IOKey("img_size"))
     return Model.create(name=name, logits=logits, upsampled_logits=upsampled_logits)
