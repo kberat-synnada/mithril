@@ -110,15 +110,17 @@ def calculate_optimal_dimensions(image: Image.Image):
 config = Config(
     model_id="black-forest-labs/FLUX.1-Fill-dev",
     dtype=ml.bfloat16,
-    device="tpu",
+    device="tpu",  # "cuda"
     guidance_scale=50,
     num_inference_steps=20,
     max_sequence_length=512
 )
 
 # Create backend for mithril model.
-seg_backend = ml.JaxBackend(device=config.device)
+seg_backend = ml.JaxBackend(device=config.device, device_mesh=(4,))
 backend = ml.JaxBackend(device=config.device, dtype=config.dtype, device_mesh=(4,))
+# seg_backend = ml.TorchBackend(device=config.device)
+# backend = ml.TorchBackend(device=config.device, dtype=config.dtype)
 
 SEG_MODEL_ID = "mattmdjaga/segformer_b2_clothes"
 processor = SegformerImageProcessor.from_pretrained(SEG_MODEL_ID)

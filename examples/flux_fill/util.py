@@ -96,7 +96,8 @@ def convert_to_ml_weights(
 ):
     params = {}
     ml_param_shapes = model.shapes
-    if isinstance(model, ParallelBackend):
+    backend_mesh = backend.get_raw_device_mesh()
+    if backend_mesh is not None:
         shards = model.propose_shardings()
     for k in sd.keys():  # type: ignore #noqa SIM118
         ml_key = k.replace(".", "_").lower()
@@ -110,7 +111,7 @@ def convert_to_ml_weights(
         param_shape = ml_param_shapes[ml_key]
         params[ml_key] = backend.reshape(param, param_shape)
         mesh = None
-        if isinstance(model, ParallelBackend) and math.prod(param_shape) > 512 * 512 * 16:
+        if backend_mesh is not None and math.prod(param_shape) > 512 * 512 * 16:
             mesh = shards[ml_key]
         params[ml_key] = backend.array(params[ml_key], dtype=dtype, device_mesh=mesh)
     return params
