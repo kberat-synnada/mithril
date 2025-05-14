@@ -166,7 +166,7 @@ class CLIPTextModelConfig:
 
 def load_clip_encoder(
     name: str,
-) -> ml.models.PhysicalModel:
+) -> ml.models.Model:
     config_path = hf_hub_download(configs[name].repo_id, "text_encoder/config.json")
 
     with open(config_path) as f:

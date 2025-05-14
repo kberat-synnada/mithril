@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import random
 import math
 from collections.abc import Callable
 from copy import deepcopy
 
 import mithril as ml
 from mithril.models import (
+    Model,
     Arange,
     BroadcastTo,
     Concat,
@@ -116,8 +116,8 @@ def get_lin_function(
 
 
 def unpack(
-    input: ml.models.Connection, height: int, width: int, backend: ml.Backend
-) -> ml.models.Connection:
+    input: ml.DataType, height: int, width: int, backend: ml.Backend
+) -> ml.DataType:
     h = math.ceil(height / 16)
     w = math.ceil(width / 16)
     b = input.shape[0]
@@ -173,75 +173,35 @@ def get_noise(
 ) -> ml.models.Connection:
     height = 2 * math.ceil(height / 16)
     width = 2 * math.ceil(width / 16)
-    noise_model = Randn(shape=(num_samples, 16, height, width), key= random.randint(0, 2**63 - 1))
-    # noise_model = Ones(shape=(num_samples, 16, height, width))
+    noise_model = Randn(key=seed, shape=(num_samples, 16, height, width))
     return noise_model.output
 
 
-def prepare_fill(
+def prepare_fill_model(
     t5: ml.models.Model,
     clip: ml.models.Model,
-    noise: ml.models.Connection,
     encoder: ml.models.Model,
 ):
 
-    prompt_embeds = t5(input = IOKey("prompt_embeds"))
+    prompt_embeds = t5(input = IOKey("t5_input"))
     text_ids = Ones()(shape=(1, prompt_embeds.shape[1], 3)) * 0.0
-    pooled_prompt_embeds = clip(input = IOKey("pooled_prompt_embeds"))
-    
-    encode_mask_model = deepcopy(encoder)
-    encode_mask_model.name = "encoder"
-    encoder.name = "encoder_cond"
+    pooled_prompt_embeds = clip(input = IOKey("clip_input"))
     
     encoder_kwargs = {
         key: IOKey()
-        for key in encode_mask_model.input_keys
+        for key in encoder.input_keys
         if "$" in key
     }
 
-    # TODO: implement encoder for mask
-    # image = IOKey("image", shape=[1024, 1024, 3])
     image = IOKey("image", shape=[None, None, 3])
     init_image = image / 127.5 - 1.0
     init_image = init_image.transpose((2, 0, 1))[None, ...]
-
-
-    bs = noise.shape[0]
-    h = noise.shape[2]
-    w = noise.shape[3]
-
-    img_id_1 = Ones()(shape=(h // 2, w // 2)) * 0.0
-    
-    img_id_2 = Arange()(stop=(h // 2))[:, None]
-    img_id_2 = BroadcastTo()(input = img_id_2, shape = (h // 2, w // 2))
-    
-    img_id_3 = Arange()(stop=(w // 2))[None, :]
-    img_id_3 = BroadcastTo()(input = img_id_2, shape = (h // 2, w // 2))
-    
-    latent_image_ids = Concat(axis=-1)(input = [img_id_1[..., None], img_id_2[..., None], img_id_3[..., None]])
-    
-    latent_image_ids = latent_image_ids.reshape((bs, -1, 3))
-    image_latents = encoder(input=init_image, **encoder_kwargs)
-    latents = noise
-    
-    b_cond = latents.shape[0]
-    c_cond = latents.shape[1]
-    h_cond = latents.shape[2]
-    w_cond = latents.shape[3]
-
-    # rearrange(img_cond, "b c (h ph) (w pw) -> b (h w) (c ph pw)", ph=2, pw=2)
-    latents = latents.reshape((b_cond, c_cond, h_cond // 2, 2, w_cond // 2, 2))
-    latents = latents.transpose((0, 2, 4, 1, 3, 5))
-    latents = latents.reshape((b_cond, -1, c_cond * 4))
-    
-    
     
     ###### MASK #####
-    # mask_image = IOKey("mask_image", shape = [1024, 1024])
     mask_image = IOKey("mask_image", shape = [None, None])
     mask_image = mask_image / 255.0
     masked_image = init_image * (1 - mask_image)
-    masked_image_latents = encode_mask_model(input = masked_image, **encoder_kwargs)
+    masked_image_latents = encoder(input = masked_image, **encoder_kwargs)
 
     b_masked = masked_image_latents.shape[0]
     c_masked = masked_image_latents.shape[1]
@@ -263,16 +223,13 @@ def prepare_fill(
     mask_image = mask_image.transpose((0, 2, 4, 1, 3, 5))
     mask = mask_image.reshape((b_masked, -1, 64 * 4))
     masked_image_latents = Concat(axis=-1)(input = [masked_image_latents, mask])
-
-    kwargs = {}
-    kwargs["text_ids"] = text_ids
-    kwargs["latent_image_ids"] = latent_image_ids
-    kwargs["latents"] = latents
-    kwargs["masked_image_latents"] = masked_image_latents
-    kwargs["pooled_prompt_embeds"] = pooled_prompt_embeds
-    kwargs["prompt_embeds"] = prompt_embeds
     
-    return kwargs
+    return Model.create(
+        text_ids=text_ids, 
+        masked_image_latents=masked_image_latents, 
+        pooled_prompt_embeds=pooled_prompt_embeds, 
+        prompt_embeds=prompt_embeds
+    )
 
 
 def denoise_logical(

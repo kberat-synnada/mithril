@@ -1,35 +1,35 @@
 from dataclasses import dataclass
 from typing import Optional
 
+import cv2
+import time
 import random
 import requests
-from io import BytesIO
 import numpy as np
+from io import BytesIO
+from scipy.ndimage import binary_dilation
+
 import PIL
 from PIL import Image
+from transformers import SegformerImageProcessor
 
 import mithril as ml
-from complete_fill_pipeline import pipeline
-
-import jax
-import jax.profiler
-jax.config.update("jax_compilation_cache_dir", "./jax_cache")
-jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
-jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
-jax.config.update("jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir")
+from util import load_seg_model
+from flux_pipeline import create_pipeline
 
 MIN_ASPECT_RATIO = 9 / 16
 MAX_ASPECT_RATIO = 16 / 9
 FIXED_DIMENSION = 1024
+ITERATION = 20
 
 @dataclass
 class Config:
     device: str
     model_id: str
     num_inference_steps: int
-    width: int
-    height: int
     dtype: type
+    width: int | None = None
+    height: int | None = None
     guidance_scale: Optional[float] = None
     max_sequence_length: Optional[int] = None
     strength: Optional[float] = None
@@ -107,92 +107,40 @@ def calculate_optimal_dimensions(image: Image.Image):
 
     return width, height
 
-
-
-import cv2
-import numpy as np
-from PIL import Image
-from scipy.ndimage import binary_dilation
-from transformers import AutoModelForSemanticSegmentation, SegformerImageProcessor
-import mithril as ml
-
-from segformer_semantic_segmentation import segformer_semantic_segmentation
-import time
-
-
-def load_weights(
-    param_shapes, torch_model, backend: ml.Backend
-):
-    ml_params = {}
-    torch_state_dict = torch_model.state_dict()
-
-    for torch_key in torch_state_dict:
-        ml_key = torch_key.replace(".", "_").lower()
-        if ml_key not in param_shapes:
-            continue
-
-        param_shape = param_shapes[ml_key]
-        parameter = torch_state_dict[torch_key].numpy().reshape(param_shape)
-        ml_params[ml_key] = backend.array(parameter)
-
-    return ml_params
-
-SEG_MODEL_ID = "mattmdjaga/segformer_b2_clothes"
-# PROMPT = "muscular, wider shoulder,bigger arms,sporty looking"
-PROMPT = "prisoner clothing, with gang tattoos"
-ITERATION = 20
-
 config = Config(
     model_id="black-forest-labs/FLUX.1-Fill-dev",
     dtype=ml.bfloat16,
     device="tpu",
     guidance_scale=50,
-    num_inference_steps=30,
-    max_sequence_length=512,
-    width=1024,
-    height=1536,
+    num_inference_steps=20,
+    max_sequence_length=512
 )
 
-processor = SegformerImageProcessor.from_pretrained(SEG_MODEL_ID)
-model = AutoModelForSemanticSegmentation.from_pretrained(SEG_MODEL_ID)
-
-# Mithril segformer model and backend.
-mitihril_model = segformer_semantic_segmentation(model.segformer.config)
+# Create backend for mithril model.
+backend = ml.JaxBackend(device=config.device, dtype=config.dtype, device_mesh=(4,))
 # backend = ml.TorchBackend(device="cuda")
-backend = ml.JaxBackend(device="tpu", dtype=ml.bfloat16, device_mesh=(4,))
-# Compile mithril model.
-input_shape = [1, 3, 512, 512]
-pm = ml.compile(
-    mitihril_model, 
-    backend=backend,
-    shapes={"input": input_shape},
-    data_keys={"input"},
-    use_short_namings=False,
-    safe_names=False,
-)
-# Load weights from torch model to mithril model.
-params = load_weights(pm.shapes, model, backend)
+
+SEG_MODEL_ID = "mattmdjaga/segformer_b2_clothes"
+processor = SegformerImageProcessor.from_pretrained(SEG_MODEL_ID)
+
+# Load weights and get compiled mithril model for segformer.
+segformer_pm, params = load_seg_model(SEG_MODEL_ID, backend)
+
 # Prepare data for Mithril model.
-data = {
-    "decode_head_batch_norm_running_mean": params.pop(
-        "decode_head_batch_norm_running_mean"
-    ),
-    "decode_head_batch_norm_running_var": params.pop(
-        "decode_head_batch_norm_running_var"
-    ),
-}
+m_key = "decode_head_batch_norm_running_mean"
+v_key = "decode_head_batch_norm_running_var"
+data = {m_key: params.pop(m_key), v_key: params.pop(v_key)}
 
 def segformer_seg(reference_image):
     inputs = processor(images=reference_image, return_tensors='np')
     data["input"] = backend.array(inputs["pixel_values"])
+    data["img_size"] = reference_image.size[::-1]
     # Run segmentation model.
-    upsampled_logits = pm.evaluate(params, data)["upsampled_logits"]
-    # upsampled_logits = backend.to_device(upsampled_logits, "cpu")
+    upsampled_logits = segformer_pm.evaluate(params, data)["upsampled_logits"]
     upsampled_logits = backend.to_device(upsampled_logits, "cpu")
     pred_seg = np.array(backend.argmax(upsampled_logits, axis=1)[0])
 
     selected_classes = [4, 7, 14, 15]
-
     # 1: selected, 0: others
     binary_mask = np.isin(pred_seg, selected_classes).astype(np.uint8)
     rgb_mask = np.stack([binary_mask * 255] * 3, axis=-1).astype(np.uint8)
@@ -208,53 +156,40 @@ def segformer_seg(reference_image):
     )
     return Image.fromarray(blurred_mask).convert("RGB")
 
-
-def infer_img2img(prompt, image, num_steps) -> Image:
-    resized_image = resize_img(image, max_side=1024)
-    mask = segformer_seg(resized_image)
-    final_mask = mask.resize(resized_image.size)
-    width, height = calculate_optimal_dimensions(resized_image)
-    muscle_image = pipeline(
-        backend=backend,
-        prompt=prompt,
-        img_cond=resized_image,
-        img_mask=final_mask,
-        guidance=config.guidance_scale,
-        width=1024,
-        height=1024,
-        # width=width,
-        # height=height,
-        num_steps=num_steps,
-        max_seq_len=512,
-    )
-    return muscle_image
-
-
-seed = random.randint(0, 2**63 - 1)
-
 input_img_url = "https://i.ibb.co/xKS4F80b/leonardo-dicaprio-1.jpg"
 response = requests.get(input_img_url)
 image = Image.open(BytesIO(response.content)).convert("RGB")
 # path = "examples/flux_fill/emre.jpeg"
 # image = Image.open(path).convert("RGB")
-# image = Image.open(sys.argv[1]).convert("RGB")
 
-start_time = time.perf_counter()
-result_image = infer_img2img(
-    prompt=PROMPT,
-    image=image,
-    num_steps=5
+resized_image = resize_img(image, max_side=1024)
+width, height = calculate_optimal_dimensions(resized_image)
+pipeline = create_pipeline(
+    backend=backend,
+    guidance=config.guidance_scale,
+    width=width,
+    height=height,
+    num_steps=config.num_inference_steps,
+    max_seq_len=512,
+    seed=random.randint(0, 2**63 - 1),
 )
-end_time = time.perf_counter()
-print(f"Inference time: {end_time - start_time:.2f} seconds")
-result_image.save("generated_img_5_steps.png")
 
-start_time = time.perf_counter()
-result_image = infer_img2img(
-    prompt=PROMPT,
-    image=image,
-    num_steps=20
-)
-end_time = time.perf_counter()
-print(f"Second Inference time: {end_time - start_time:.2f} seconds")
-result_image.save("generated_img_20_steps.png")
+def infer_img2img(prompt, image) -> Image:
+    mask = segformer_seg(image)
+    final_mask = mask.resize(image.size)
+    return pipeline(prompt=prompt, img_cond=image, img_mask=final_mask)
+
+prompts = [
+    "muscular wider shoulder, bigger arms, sporty looking",
+    "Jail Uniform, black-and-white striped prison uniform, with gang tattoos on the neck",
+    "superman costume, with a cape, muscular",
+    "gold necklace, muscular, rose tattoo on the chest",
+]
+
+for prompt in prompts:
+    start_time = time.perf_counter()
+    result_image = infer_img2img(prompt=prompt, image=resized_image)
+    end_time = time.perf_counter()
+    first_word = prompt.split()[0]
+    print(f"Inference time for prompt '{prompt}': {end_time - start_time:.2f} seconds")
+    result_image.save(f"generated_img_{first_word}.png")

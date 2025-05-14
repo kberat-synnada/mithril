@@ -18,13 +18,16 @@ import math
 from dataclasses import dataclass
 
 import torch
-from auto_encoder import AutoEncoderParams, decode, encode
-from conditioner import HFEmbedder
 from einops import rearrange
-from huggingface_hub import hf_hub_download
-from imwatermark import WatermarkEncoder
-from model import FluxParams, flux
 from safetensors import safe_open
+from conditioner import HFEmbedder
+from imwatermark import WatermarkEncoder
+from huggingface_hub import hf_hub_download
+from transformers import AutoModelForSemanticSegmentation
+from auto_encoder import AutoEncoderParams, decode, encode
+
+from model import FluxParams, flux
+from segformer_semantic_segmentation import segformer_semantic_segmentation
 
 import mithril as ml
 
@@ -52,6 +55,39 @@ class ModelSpec:
     repo_flow: str | None
     repo_ae: str | None
 
+
+def load_seg_model(
+    model_id, backend: ml.Backend
+):
+    t_model = AutoModelForSemanticSegmentation.from_pretrained(model_id)
+
+    # Mithril segformer model and backend.
+    segformer_model = segformer_semantic_segmentation(t_model.segformer.config)
+
+    # Compile segformer model.
+    segformer_pm = ml.compile(
+        segformer_model, 
+        backend=backend,
+        shapes={"input": [1, 3, 512, 512]},
+        data_keys={"input"},
+        use_short_namings=False,
+        safe_names=False,
+    )
+
+    ml_params = {}
+    torch_state_dict = t_model.state_dict()
+    param_shapes = segformer_pm.shapes
+    for torch_key in torch_state_dict:
+        ml_key = torch_key.replace(".", "_").lower()
+        if ml_key not in param_shapes:
+            continue
+
+        param_shape = param_shapes[ml_key]
+        parameter = torch_state_dict[torch_key].numpy().reshape(param_shape)
+        ml_params[ml_key] = backend.array(parameter)
+
+    return segformer_pm, ml_params
+
 def convert_to_ml_weights(
     model: ml.models.PhysicalModel,
     sd,
@@ -66,8 +102,10 @@ def convert_to_ml_weights(
         if ml_key not in ml_param_shapes:
             # print(f"Skipping {k}")
             continue
-
-        param = sd.get_tensor(k)  # type: ignore
+        if isinstance(sd, safe_open):
+            param = sd.get_tensor(k)  # type: ignore
+        else:
+            param = sd[k]
         param_shape = ml_param_shapes[ml_key]
         params[ml_key] = backend.reshape(param, param_shape)
         mesh = None
@@ -211,7 +249,7 @@ def load_flow_model(name: str, backend: ml.Backend, height, width, hf_download: 
 
 def load_decoder(
     name: str, backend: ml.Backend, width:int, height:int, hf_download: bool = True
-) -> tuple[ml.models.Model, dict]:
+) -> tuple[ml.models.PhysicalModel, ml.models.Model, dict]:
     ckpt_path = configs[name].ae_path
     if (
         ckpt_path is None
@@ -222,7 +260,6 @@ def load_decoder(
         ckpt_path = hf_hub_download(r_id, r_ae)
 
     # Loading the autoencoder
-    print("Init AE")
     decoder_lm = decode(configs[name].ae_params)
     decoder_lm.set_shapes(input=[1, 16, height // 8, width // 8])
 
@@ -244,7 +281,7 @@ def load_decoder(
 
 
 def load_encoder(
-    name: str, backend: ml.Backend, width:int, height:int, hf_download: bool = True
+    name: str, backend: ml.Backend, width:int, height:int, hf_download: bool = True, seed: int = 42
 ) -> tuple[ml.models.Model, dict]:
     ckpt_path = configs[name].ae_path
     if (
@@ -256,8 +293,7 @@ def load_encoder(
         ckpt_path = hf_hub_download(r_id, r_ae)
 
     # Loading the autoencoder
-    print("Init AE")
-    encoder_lm = encode(configs[name].ae_params)
+    encoder_lm = encode(seed, configs[name].ae_params)
     encoder_lm.set_shapes(input=[1, 3, height, width])
 
     encoder_pm = ml.compile(

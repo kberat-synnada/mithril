@@ -30,7 +30,6 @@ from mithril.models import (
     Subtract,
     Transpose,
     Randn,
-    Ones,
     Buffer,
 )
 from mithril.framework.common import TBD
@@ -239,30 +238,14 @@ def decoder(
 
     return decoder
 
-
-# def diagonal_gaussian(sample: bool = True, chunk_dim: int = 1):
-#     input = IOKey("input")
-#     split_output = Split(axis=chunk_dim, split_size=2)(input = input)
-#     mean = split_output[0]
-#     log_var = split_output[1]
-#     if sample:
-#         rand_model = Randn()
-#         std = (0.5 * log_var).exp()
-#         rand_out, _ = rand_model(shape = mean.shape)
-#         std_out = std * (rand_out / 100.0)
-#         output = mean + std_out
-#         return Model.create(output=output)
-#     else:
-#         return Model.create(output=mean)
-import random
-def diagonal_gaussian(sample: bool = True, chunk_dim: int = 1):
+def diagonal_gaussian(seed, sample: bool = True, chunk_dim: int = 1):
     input = IOKey("input")
     model = Model()
     model |= (split := Split(axis=chunk_dim, split_size=2)).connect(input = input)
     mean = split.output[0]
     if sample:
         log_var = split.output[1]
-        model |= (randn_model := Randn(key = random.randint(0, 2**63 - 1))).connect(shape=mean.shape)
+        model |= (randn_model := Randn(key = seed)).connect(shape=mean.shape)
         std = (0.5 * log_var).exp()
         std_out = std * randn_model.output
         output = mean + std_out
@@ -271,9 +254,7 @@ def diagonal_gaussian(sample: bool = True, chunk_dim: int = 1):
     model |= Buffer().connect(input=output, output="mean")
     return model
 
-def auto_encoder(
-    ae_params: AutoEncoderParams,
-):
+def auto_encoder(seed, ae_params: AutoEncoderParams):
     model = Model()
     model |= encoder(
         ae_params.ch,
@@ -282,7 +263,7 @@ def auto_encoder(
         ae_params.z_channels,
         name="encoder",
     ).connect(input="input")
-    model += diagonal_gaussian()
+    model += diagonal_gaussian(seed)
 
     model += Subtract().connect(right=ae_params.shift_factor)
     model += Multiply().connect(right=ae_params.scale_factor)
@@ -313,7 +294,7 @@ def decode(ae_params: AutoEncoderParams):
     return model
 
 
-def encode(ae_params: AutoEncoderParams) -> Model:
+def encode(seed, ae_params: AutoEncoderParams) -> Model:
     input = IOKey("input")
 
     encoder_model = encoder(
@@ -324,7 +305,7 @@ def encode(ae_params: AutoEncoderParams) -> Model:
         name="encoder",
     )
 
-    diag_gaussian_model = diagonal_gaussian()
+    diag_gaussian_model = diagonal_gaussian(seed)
 
     output = diag_gaussian_model(input=encoder_model(input=input))
     output = ae_params.scale_factor * (output - ae_params.shift_factor)

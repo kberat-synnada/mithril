@@ -14,7 +14,7 @@
 
 from dataclasses import dataclass
 
-from examples.flux_fill.layers import (
+from layers import (
     double_stream_block,
     embed_nd,
     last_layer,

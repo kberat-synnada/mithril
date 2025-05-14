@@ -34,7 +34,7 @@ class JaxParallel(Parallel[jax.numpy.ndarray]):
 
     def run_callable(self, *primals: jax.Array, fn: Callable[..., Any]) -> Any:
         fn_name = str(id(fn))
-        return self.callables[fn_name](*primals)
+        return fn(*primals)
 
     def parallelize(
         self, tensor: jax.Array, device_mesh: tuple[int, ...] | None = None

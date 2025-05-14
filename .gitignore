@@ -77,4 +77,4 @@ data/
 *.pickle
 build
 mithril.egg-info
-
+jax_cache
