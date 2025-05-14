@@ -1205,7 +1205,7 @@ def randn(
     device: str,
     default_dtype: str,
 ) -> torch.Tensor:
-    generator = torch.manual_seed(key)
+    generator = torch.Generator(device=device).manual_seed(key)
     if dtype is None:
         dtype = default_dtype
     return torch.randn(
@@ -1223,7 +1223,7 @@ def randint(
     device: str,
     default_dtype: str,
 ) -> torch.Tensor:
-    generator = torch.manual_seed(key)
+    generator = torch.Generator(device=device).manual_seed(key)
     if dtype is None:
         dtype = "int32"
     return torch.randint(

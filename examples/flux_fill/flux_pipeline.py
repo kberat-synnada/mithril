@@ -48,11 +48,11 @@ def _prepare_noise(height: int, width: int, backend: ml.Backend, dtype: ml.types
     # Create noise using backend's random generator with the given seed
     latents = backend.randn(batch_size, channels, adjusted_height, adjusted_width, key=seed, dtype=dtype)
     # Reshape noise into smaller patches
-    latents = latents.reshape((batch_size, channels, adjusted_height // 2, 2, adjusted_width // 2, 2))
+    latents = backend.reshape(latents, (batch_size, channels, adjusted_height // 2, 2, adjusted_width // 2, 2))
     # Permute dimensions to bring patch dimensions together
-    latents = latents.transpose((0, 2, 4, 1, 3, 5))
+    latents = backend.transpose(latents, (0, 2, 4, 1, 3, 5))
     # Flatten to combine patch dimensions and channels
-    latents = latents.reshape((batch_size, -1, channels * 4))
+    latents = backend.reshape(latents, (batch_size, -1, channels * 4))
     return latents
 
 def _prepare_latent_image_ids(height: int, width: int, backend: ml.Backend, dtype: ml.types.Dtype, vae_scale_factor: int):
@@ -94,13 +94,13 @@ def create_pipeline(
     # Initialize sub-model names and parameters.
     name = "flux-dev-fill"
     
-    print("Loading T5 encoder")
+    print("Loading T5 Encoder")
     t5_lm = load_t5_encoder(name, max_seq_len)
     t5_tokenizer = load_t5_tokenizer(backend, max_seq_len, name)
     t5_weights = download_t5_encoder_weights(backend, name)
     t5_lm.name = "t5"
     
-    print("Loading CLIP encoder")
+    print("Loading CLIP Encoder")
     clip_lm = load_clip_encoder(name)
     clip_tokenizer = load_clip_tokenizer(backend, name)
     clip_weights = download_clip_encoder_weights(backend, name)
@@ -122,14 +122,13 @@ def create_pipeline(
     )
     
     # Load the flow model which is later used for denoising.
-    print("Loading Flow model")
+    print("Loading Flow Model")
     flow_pm, _, flow_params = load_flow_model(name, backend=backend, height=height, width=width)
     
     # Load the decoder model to convert processed latent representations back to image space.
-    print("Loading Decoder model")
+    print("Loading Decoder Model\n")
     decoder_pm, _, decoder_params = load_decoder(name, backend, width, height)
     
-    print("get_schedule")
     vae_scale_factor = 8  # fixed VAE scale factor; ideally should come from config
     # Determine the sequence length of the image based on the down-scale factor
     image_seq_len = (int(height) // vae_scale_factor // 2) * (int(width) // vae_scale_factor // 2)
@@ -173,7 +172,6 @@ def create_pipeline(
         unpacked_input = unpack(data, height, width, backend)
         output = decoder_pm.evaluate(decoder_params, {"input": unpacked_input})
 
-        print("Denormalize output")
         # Denormalize the output image tensor from [-1, 1] to [0, 1] and cast for display.
         _output = backend.clip(output["output"] * 0.5 + 0.5, 0, 1)
         _output = backend.cast(_output, ml.float)

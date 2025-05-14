@@ -30,7 +30,7 @@ from model import FluxParams, flux
 from segformer_semantic_segmentation import segformer_semantic_segmentation
 
 import mithril as ml
-
+from mithril.backends.backend import ParallelBackend
 
 def load_t5(device: str | torch.device = "cuda", max_length: int = 128) -> HFEmbedder:
     # max length 64, 128, 256 and 512 should work (if your sequence is short enough)
@@ -96,7 +96,8 @@ def convert_to_ml_weights(
 ):
     params = {}
     ml_param_shapes = model.shapes
-    shards = model.propose_shardings()
+    if isinstance(model, ParallelBackend):
+        shards = model.propose_shardings()
     for k in sd.keys():  # type: ignore #noqa SIM118
         ml_key = k.replace(".", "_").lower()
         if ml_key not in ml_param_shapes:
@@ -109,7 +110,7 @@ def convert_to_ml_weights(
         param_shape = ml_param_shapes[ml_key]
         params[ml_key] = backend.reshape(param, param_shape)
         mesh = None
-        if math.prod(param_shape) > 512 * 512 * 16:
+        if isinstance(model, ParallelBackend) and math.prod(param_shape) > 512 * 512 * 16:
             mesh = shards[ml_key]
         params[ml_key] = backend.array(params[ml_key], dtype=dtype, device_mesh=mesh)
     return params
@@ -222,7 +223,6 @@ configs = {
 
 def load_flow_model(name: str, backend: ml.Backend, height, width, hf_download: bool = True):
     # Loading Flux
-    print("Init model")
     ckpt_path = configs[name].ckpt_path
     if (
         ckpt_path is None

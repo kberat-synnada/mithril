@@ -117,14 +117,14 @@ config = Config(
 )
 
 # Create backend for mithril model.
+seg_backend = ml.JaxBackend(device=config.device)
 backend = ml.JaxBackend(device=config.device, dtype=config.dtype, device_mesh=(4,))
-# backend = ml.TorchBackend(device="cuda")
 
 SEG_MODEL_ID = "mattmdjaga/segformer_b2_clothes"
 processor = SegformerImageProcessor.from_pretrained(SEG_MODEL_ID)
 
 # Load weights and get compiled mithril model for segformer.
-segformer_pm, params = load_seg_model(SEG_MODEL_ID, backend)
+segformer_pm, params = load_seg_model(SEG_MODEL_ID, seg_backend)
 
 # Prepare data for Mithril model.
 m_key = "decode_head_batch_norm_running_mean"
@@ -133,12 +133,12 @@ data = {m_key: params.pop(m_key), v_key: params.pop(v_key)}
 
 def segformer_seg(reference_image):
     inputs = processor(images=reference_image, return_tensors='np')
-    data["input"] = backend.array(inputs["pixel_values"])
+    data["input"] = seg_backend.array(inputs["pixel_values"])
     data["img_size"] = reference_image.size[::-1]
     # Run segmentation model.
     upsampled_logits = segformer_pm.evaluate(params, data)["upsampled_logits"]
-    upsampled_logits = backend.to_device(upsampled_logits, "cpu")
-    pred_seg = np.array(backend.argmax(upsampled_logits, axis=1)[0])
+    upsampled_logits = seg_backend.to_device(upsampled_logits, "cpu")
+    pred_seg = np.array(seg_backend.argmax(upsampled_logits, axis=1)[0])
 
     selected_classes = [4, 7, 14, 15]
     # 1: selected, 0: others
@@ -159,7 +159,7 @@ def segformer_seg(reference_image):
 input_img_url = "https://i.ibb.co/xKS4F80b/leonardo-dicaprio-1.jpg"
 response = requests.get(input_img_url)
 image = Image.open(BytesIO(response.content)).convert("RGB")
-# path = "examples/flux_fill/emre.jpeg"
+# path = "examples/flux_fill/berkay.png"
 # image = Image.open(path).convert("RGB")
 
 resized_image = resize_img(image, max_side=1024)
